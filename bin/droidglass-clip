@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# droidglass-clip — Smart clipboard sync between laptop and phone
+set -euo pipefail
+
+TOPIC="${PHONE_NTFY_TOPIC:-}"
+DROIDGLASS_BIN="$(dirname "$(realpath "$0")")/droidglass"
+
+sync_to_phone() {
+  local text="${1:-$(wl-paste 2>/dev/null || xclip -o -selection clipboard 2>/dev/null || true)}"
+  if [[ -z "$text" ]]; then
+    echo "droidglass-clip: clipboard is empty" >&2
+    exit 1
+  fi
+
+  if [[ -n "$TOPIC" ]]; then
+    # Push via ntfy with copy action
+    curl -s -X POST "https://ntfy.sh/$TOPIC" \
+      -H "Title: Clipboard" \
+      -H "Actions: view, Copy text, copy:$text" \
+      -d "$text" >/dev/null && echo "droidglass-clip: copied to phone via ntfy"
+  else
+    # Push via adb input / broadcast
+    "$DROIDGLASS_BIN" type "$text" >/dev/null 2>&1 || true
+    echo "droidglass-clip: sent to phone via ADB"
+  fi
+}
+
+watch_mode() {
+  echo "droidglass-clip: watching Wayland clipboard for changes..."
+  if ! command -v wl-paste >/dev/null; then
+    echo "droidglass-clip: wl-paste required for watch mode" >&2
+    exit 1
+  fi
+  wl-paste --watch "$0" sync
+}
+
+case "${1:-sync}" in
+  sync)
+    shift || true
+    sync_to_phone "${*:-}"
+    ;;
+  watch)
+    watch_mode
+    ;;
+  *)
+    echo "Usage: droidglass-clip [sync [text] | watch]"
+    ;;
+esac

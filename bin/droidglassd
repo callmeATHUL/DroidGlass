@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# droidglassd — Event-driven state & screen hand-off daemon for DroidGlass
+# Monitors Android screen state & notifications via ADB events without polling.
+set -euo pipefail
+
+PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/droidglassd.pid"
+DROIDGLASS_BIN="$(dirname "$(realpath "$0")")/droidglass"
+
+# Write PID file
+echo $$ > "$PIDFILE"
+cleanup() {
+  rm -f "$PIDFILE"
+  exit 0
+}
+trap cleanup SIGINT SIGTERM EXIT
+
+log() {
+  echo "[droidglassd $(date +'%H:%M:%S')] $*"
+}
+
+get_scrcpy_address() {
+  hyprctl clients -j 2>/dev/null | jq -r '.[] | select(.class=="scrcpy" or .title=="droidglass") | .address' | head -1
+}
+
+get_active_workspace() {
+  hyprctl activeworkspace -j 2>/dev/null | jq -r .name
+}
+
+handle_screen_state() {
+  local line="$1"
+  local addr ws cur_ws
+
+  # Check for screen state changes
+  if [[ "$line" =~ (SCREEN_OFF|screen_toggled.*0|screen_off|state=OFF|screenState=0) ]]; then
+    log "Event: Physical phone screen turned OFF -> Summoning mirror"
+    addr=$(get_scrcpy_address)
+    if [[ -n "$addr" ]]; then
+      cur_ws=$(get_active_workspace)
+      if [[ -n "$cur_ws" ]]; then
+        hyprctl dispatch "hl.dsp.window.move({ workspace = \"$cur_ws\", window = \"address:$addr\" })" >/dev/null 2>&1 || \
+          hyprctl dispatch movetoworkspace "$cur_ws,address:$addr" >/dev/null 2>&1 || true
+        hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null 2>&1 || \
+          hyprctl dispatch focuswindow "address:$addr" >/dev/null 2>&1 || true
+      fi
+    else
+      # If scrcpy not running, auto-launch
+      "$DROIDGLASS_BIN" mirror >/dev/null 2>&1 &
+    fi
+
+  elif [[ "$line" =~ (SCREEN_ON|screen_toggled.*1|screen_on|state=ON|screenState=1) ]]; then
+    log "Event: Physical phone screen turned ON -> Parking mirror"
+    addr=$(get_scrcpy_address)
+    if [[ -n "$addr" ]]; then
+      hyprctl dispatch "hl.dsp.window.move({ workspace = \"special:phone\", window = \"address:$addr\", silent = true })" >/dev/null 2>&1 || \
+        hyprctl dispatch movetoworkspacesilent "special:phone,address:$addr" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+handle_notification_event() {
+  local line="$1"
+  # Check if log line contains notification broadcast
+  if [[ "$line" =~ (notification_enqueue|NotificationRecord|StatusBarNotification) ]]; then
+    local title text
+    title=$(echo "$line" | grep -oP 'title=\K[^,;]+' | head -1) || true
+    text=$(echo "$line" | grep -oP 'text=\K[^,;]+' | head -1) || true
+    if [[ -n "$title" ]] || [[ -n "$text" ]]; then
+      notify-send -a "DroidGlass" -i "phone" "${title:-Phone Alert}" "${text:-New notification received}" 2>/dev/null || true
+    fi
+  fi
+}
+
+log "Starting DroidGlass state daemon..."
+
+while true; do
+  target=$("$DROIDGLASS_BIN" find 2>/dev/null || true)
+  if [[ -z "$target" ]]; then
+    target=$(adb devices | grep -oP '^[\d.]+:5555(?=\s*device)' | head -1) || true
+  fi
+
+  if [[ -z "$target" ]] && [[ -n "${PHONE_SERIAL:-}" ]]; then
+    target="$PHONE_SERIAL"
+  fi
+
+  if [[ -z "$target" ]]; then
+    sleep 5
+    continue
+  fi
+
+  log "Connected to target: $target. Streaming logcat events..."
+  
+  # Stream event logcat directly
+  adb -s "$target" shell logcat -b events -v raw 2>/dev/null | while read -r line; do
+    handle_screen_state "$line"
+    handle_notification_event "$line"
+  done || true
+
+  log "Logcat stream disconnected. Reconnecting in 3 seconds..."
+  sleep 3
+done

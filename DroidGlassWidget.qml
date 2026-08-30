@@ -10,14 +10,19 @@ BarWidget {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
+  // State tracking (0: Disconnected/Standby, 1: Mirrored/Screen Dark)
+  property int mirrorState: 1
+
   BarIconButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: "\uf10b"
+    text: root.mirrorState === 1 ? "\uf10b" : "\uf3cd"
     slotSize: Style.bar.statusSlot
     fontSize: Style.font.caption
-    tooltipText: "Phone mirror (show/hide)"
-    onPressed: if (root.bar) root.bar.run("phone show")
+    tooltipText: root.mirrorState === 1 
+      ? "DroidGlass: Mirrored (Screen Dark)" 
+      : "DroidGlass: Phone Active / Standby"
+    onPressed: if (root.bar) root.bar.run("droidglass show")
   }
 }

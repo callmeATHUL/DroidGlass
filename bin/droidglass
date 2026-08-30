@@ -1,0 +1,250 @@
+#!/usr/bin/env bash
+# droidglass — Wireless Android control & screen mirroring for Omarchy (Arch + Hyprland).
+# Auto-discovered IP, adb over USB / wifi (port 5555) / NetBird mesh.
+set -euo pipefail
+
+SERIAL="${PHONE_SERIAL:-}"
+IPCACHE="${XDG_CACHE_HOME:-$HOME/.cache}/droidglass-wifi-ip"
+PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/droidglassd.pid"
+NETBIRD_IP="${PHONE_NETBIRD_IP:-}"   # Mesh IP e.g. 100.112.x.y
+
+mkdir -p "$(dirname "$IPCACHE")"
+
+find_wifi() {
+  # 1. cached IP still open? 2. netbird IP? 3. scan local /24 for port 5555
+  local ip
+  if [[ -f "$IPCACHE" ]]; then
+    ip=$(<"$IPCACHE")
+    if timeout 0.7 bash -c "echo >/dev/tcp/$ip/5555" 2>/dev/null; then
+      echo "$ip"
+      return 0
+    fi
+  fi
+
+  if [[ -n "$NETBIRD_IP" ]]; then
+    if timeout 1.5 bash -c "echo >/dev/tcp/$NETBIRD_IP/5555" 2>/dev/null; then
+      echo "$NETBIRD_IP" | tee "$IPCACHE"
+      return 0
+    fi
+  fi
+
+  local base
+  base=$(ip -4 route show default 2>/dev/null | grep -oP 'src \K[\d.]+' | head -1 | cut -d. -f1-3) || true
+  if [[ -n "$base" ]]; then
+    for i in $(seq 1 254); do
+      (timeout 0.5 bash -c "echo >/dev/tcp/$base.$i/5555" 2>/dev/null && echo "$base.$i") &
+    done | head -1 | tee "$IPCACHE"
+    return 0
+  fi
+
+  return 1
+}
+
+resolve() {
+  # Return the active adb target: USB if plugged, else wireless adb
+  if [[ -n "$SERIAL" ]] && adb devices | grep -q "^$SERIAL[[:space:]]*device"; then
+    echo "$SERIAL"
+    return 0
+  fi
+
+  local live
+  live=$(adb devices | grep -oP '^[\d.]+:5555(?=\s*device)' | head -1) || true
+  if [[ -n "$live" ]]; then
+    echo "$live"
+    return 0
+  fi
+
+  local ip
+  ip=$(find_wifi) || { echo "droidglass: phone not found (USB unplugged, no wifi adb on subnet)" >&2; return 1; }
+  timeout 8 adb connect "$ip:5555" >/dev/null 2>&1 || true
+  echo "$ip:5555"
+}
+
+adbp() {
+  local d
+  d=$(resolve) || exit 1
+  adb -s "$d" "$@"
+}
+
+daemon_status() {
+  if [[ -f "$PIDFILE" ]] && kill -0 "$(<"$PIDFILE")" 2>/dev/null; then
+    echo "droidglassd is running (PID $(<"$PIDFILE"))"
+    return 0
+  else
+    echo "droidglassd is not running"
+    return 1
+  fi
+}
+
+daemon_start() {
+  if daemon_status >/dev/null 2>&1; then
+    echo "droidglassd is already running (PID $(<"$PIDFILE"))"
+    return 0
+  fi
+  local daemon_bin
+  daemon_bin="$(dirname "$(realpath "$0")")/droidglassd"
+  if [[ ! -x "$daemon_bin" ]]; then
+    echo "droidglass: daemon binary not found at $daemon_bin" >&2
+    exit 1
+  fi
+  nohup "$daemon_bin" >/dev/null 2>&1 &
+  echo "droidglassd started (PID $!)"
+}
+
+daemon_stop() {
+  if [[ -f "$PIDFILE" ]]; then
+    local pid
+    pid=$(<"$PIDFILE")
+    kill "$pid" 2>/dev/null || true
+    rm -f "$PIDFILE"
+    echo "droidglassd stopped"
+  else
+    pkill -f droidglassd 2>/dev/null || true
+    echo "droidglassd stopped"
+  fi
+}
+
+case "${1:-help}" in
+  mirror)
+    # Start or stop the scrcpy window. Phone screen dark, stays awake, borderless.
+    if pgrep -x scrcpy >/dev/null; then
+      pkill -x scrcpy
+      echo "droidglass: mirror stopped"
+    else
+      d=$(resolve) || exit 1
+      # Apply stayon to prevent MTK doze issues
+      adb -s "$d" shell svc power stayon true >/dev/null 2>&1 || true
+      setsid scrcpy -s "$d" --window-title 'droidglass' \
+        --window-borderless --turn-screen-off --stay-awake \
+        --power-off-on-close >/dev/null 2>&1 &
+      echo "droidglass: mirror launched for $d"
+    fi
+    ;;
+
+  show)
+    # Toggle visibility: hidden in special:phone -> active workspace, visible -> special:phone, dead -> launch
+    if ! pgrep -x scrcpy >/dev/null; then
+      exec "$0" mirror
+    fi
+    addr=$(hyprctl clients -j 2>/dev/null | jq -r '.[] | select(.class=="scrcpy" or .title=="droidglass") | .address' | head -1)
+    ws=$(hyprctl clients -j 2>/dev/null | jq -r '.[] | select(.class=="scrcpy" or .title=="droidglass") | .workspace.name' | head -1)
+    if [[ "$ws" == special:phone* ]]; then
+      cur=$(hyprctl activeworkspace -j 2>/dev/null | jq -r .name)
+      hyprctl dispatch "hl.dsp.window.move({ workspace = \"$cur\", window = \"address:$addr\" })" >/dev/null 2>&1 || \
+        hyprctl dispatch movetoworkspace "$cur,address:$addr" >/dev/null 2>&1 || true
+      hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null 2>&1 || \
+        hyprctl dispatch focuswindow "address:$addr" >/dev/null 2>&1 || true
+    else
+      hyprctl dispatch "hl.dsp.window.move({ workspace = \"special:phone\", window = \"address:$addr\", silent = true })" >/dev/null 2>&1 || \
+        hyprctl dispatch movetoworkspacesilent "special:phone,address:$addr" >/dev/null 2>&1 || true
+    fi
+    ;;
+
+  hide)
+    addr=$(hyprctl clients -j 2>/dev/null | jq -r '.[] | select(.class=="scrcpy" or .title=="droidglass") | .address' | head -1)
+    if [[ -n "$addr" ]]; then
+      hyprctl dispatch "hl.dsp.window.move({ workspace = \"special:phone\", window = \"address:$addr\", silent = true })" >/dev/null 2>&1 || \
+        hyprctl dispatch movetoworkspacesilent "special:phone,address:$addr" >/dev/null 2>&1 || true
+    fi
+    ;;
+
+  find)
+    find_wifi
+    ;;
+
+  shot)
+    out="${2:-/tmp/droidglass-$(date +%s).png}"
+    adbp exec-out screencap -p > "$out"
+    echo "$out"
+    ;;
+
+  tap)
+    adbp shell input tap "$2" "$3"
+    ;;
+
+  type)
+    shift
+    adbp shell input text "$(printf %s "$*" | sed 's/ /%s/g')"
+    ;;
+
+  key)
+    # 3=HOME, 4=BACK, 26=POWER, 82=MENU, 224=WAKEUP
+    adbp shell input keyevent "$2"
+    ;;
+
+  open)
+    adbp shell am start -a android.intent.action.VIEW -d "$2"
+    ;;
+
+  app)
+    adbp shell monkey -p "$2" -c android.intent.category.LAUNCHER 1 >/dev/null
+    ;;
+
+  notifs)
+    adbp shell dumpsys notification --noredact 2>/dev/null | grep -E 'android.title=|android.text=' | sed 's/^ *//' | head -40
+    ;;
+
+  pull)
+    adbp pull "$2" "${3:-.}"
+    ;;
+
+  push)
+    adbp push "$2" "${3:-/sdcard/Download/}"
+    ;;
+
+  battery)
+    adbp shell dumpsys battery | grep -E 'level|status|health'
+    ;;
+
+  ping)
+    adbp shell echo pong
+    ;;
+
+  notify)
+    shift
+    t="${1:-Laptop}"; shift || true
+    curl -s -X POST "https://ntfy.sh/${PHONE_NTFY_TOPIC:?set PHONE_NTFY_TOPIC}" -H "Title: $t" -d "${*:-ping}" >/dev/null && echo sent
+    ;;
+
+  daemon)
+    case "${2:-status}" in
+      start)  daemon_start ;;
+      stop)   daemon_stop ;;
+      status) daemon_status ;;
+      restart) daemon_stop; sleep 1; daemon_start ;;
+      *) echo "Usage: droidglass daemon {start|stop|restart|status}" ;;
+    esac
+    ;;
+
+  ai)
+    shift
+    d=$(resolve) || exit 1
+    exec claude -p "You control an Android phone via bash adb (target $d). Use 'droidglass shot', 'droidglass tap X Y', 'droidglass type <text>', 'droidglass key <code/event>', 'droidglass open <uri>', 'droidglass app <pkg>', read screenshots to see the screen state. Task: $*"
+    ;;
+
+  help|--help|-h|*)
+    echo "DroidGlass CLI — Wireless phone control & screen mirroring"
+    echo ""
+    echo "Usage: droidglass <command> [args...]"
+    echo ""
+    echo "Commands:"
+    echo "  mirror                 Toggle scrcpy screen mirror (screen dark, stays awake)"
+    echo "  show                   Toggle mirror visibility between active workspace and special:phone"
+    echo "  hide                   Park mirror into special:phone"
+    echo "  find                   Auto-discover and print phone's Wi-Fi ADB IP"
+    echo "  shot [out.png]         Take screenshot and output path"
+    echo "  tap <x> <y>            Tap coordinates on screen"
+    echo "  type <text>            Type text into focused input field"
+    echo "  key <code|name>        Send keycode (3=Home, 4=Back, 26=Power, 224=Wakeup)"
+    echo "  open <url|uri>         Open URI/URL on phone"
+    echo "  app <package_name>     Launch application by package name"
+    echo "  notifs                 Dump recent notifications from dumpsys"
+    echo "  pull <phone_path> [..] Pull file from phone"
+    echo "  push <local_file> [..] Push file to phone (/sdcard/Download/)"
+    echo "  battery                Show battery percentage and charging state"
+    echo "  ping                   Test ADB communication"
+    echo "  notify <title> <msg>   Send push notification via ntfy.sh"
+    echo "  daemon [start|stop...] Manage background state orchestration daemon"
+    echo "  ai \"<task>\"            Hand phone control to one-shot AI agent"
+    ;;
+esac
