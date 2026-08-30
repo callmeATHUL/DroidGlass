@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "droidglass.mirror",
+  "name": "DroidGlass",
+  "version": "0.1.0",
+  "author": "Athul P Sudheer",
+  "description": "iPhone-Mirroring-style Android phone mirror for Omarchy: bar icon toggles a borderless phone-shaped scrcpy window while the physical screen stays dark",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "DroidGlassWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "DroidGlass",
+    "description": "Show/hide the Android phone mirror",
+    "category": "Custom",
+    "allowMultiple": false
+  }
+}

@@ -5,7 +5,7 @@ import qs.Ui
 
 BarWidget {
   id: root
-  moduleName: "syntax_mind.phone"
+  moduleName: "droidglass.mirror"
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight

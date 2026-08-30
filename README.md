@@ -1,4 +1,4 @@
-# omarchy-phone
+# DroidGlass
 
 Wireless Android phone control and screen mirroring for [Omarchy](https://omarchy.org/)
 (Arch + Hyprland), built on `adb` + `scrcpy` + a Quickshell bar widget.
@@ -34,12 +34,17 @@ adb works across networks — put the phone's mesh IP in `NETBIRD_IP` inside `bi
 
 ## Install
 
+The repo is a valid Omarchy shell plugin (`omarchy plugin validate .` passes),
+so the bar widget installs straight from git:
+
+```bash
+omarchy plugin add https://github.com/<you>/droidglass --enable
+```
+
+Then the CLI and window rule:
+
 ```bash
 install -m755 bin/phone bin/phone-clip ~/.local/bin/
-mkdir -p ~/.config/omarchy/plugins/<you>.phone
-cp omarchy-plugin/* ~/.config/omarchy/plugins/<you>.phone/
-# edit the plugin id in manifest.json/PhoneWidget.qml to match <you>.phone,
-# then add {"id": "<you>.phone"} to the bar layout in ~/.config/omarchy/shell.json
 cat hypr/phone-mirror.lua >> ~/.config/hypr/hyprland.lua && hyprctl reload
 ```
 
