@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# bq-ai CLI wrapper for DroidGlass companion
+set -euo pipefail
+
+SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+PLUGIN_DIR="$REPO_ROOT/plugins/bq-desktop-ai"
+
+export PYTHONPATH="$PLUGIN_DIR:${PYTHONPATH:-}"
+exec python3 -m src.cli "$@"

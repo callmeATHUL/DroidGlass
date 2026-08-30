@@ -216,6 +216,13 @@ case "${1:-help}" in
     esac
     ;;
 
+  bq)
+    # Forward to BigQuery AI module
+    shift
+    SCRIPT_DIR="$(dirname "$(realpath "$0")")"
+    exec "$SCRIPT_DIR/bq-ai" "$@"
+    ;;
+
   ai)
     shift
     d=$(resolve) || exit 1
@@ -223,11 +230,11 @@ case "${1:-help}" in
     ;;
 
   help|--help|-h|*)
-    echo "DroidGlass CLI — Wireless phone control & screen mirroring"
+    echo "DroidGlass CLI — Wireless phone control & Omarchy desktop companion"
     echo ""
     echo "Usage: droidglass <command> [args...]"
     echo ""
-    echo "Commands:"
+    echo "Phone Commands:"
     echo "  mirror                 Toggle scrcpy screen mirror (screen dark, stays awake)"
     echo "  show                   Toggle mirror visibility between active workspace and special:phone"
     echo "  hide                   Park mirror into special:phone"
@@ -246,5 +253,14 @@ case "${1:-help}" in
     echo "  notify <title> <msg>   Send push notification via ntfy.sh"
     echo "  daemon [start|stop...] Manage background state orchestration daemon"
     echo "  ai \"<task>\"            Hand phone control to one-shot AI agent"
+    echo ""
+    echo "BigQuery AI Companion Commands:"
+    echo "  bq sql \"<prompt>\"      Translate natural language to BigQuery SQL"
+    echo "  bq explain [\"<sql>\"]   Explain & optimize SQL (or clipboard query)"
+    echo "  bq forecast --table .. Time-series forecasting (AI.FORECAST)"
+    echo "  bq anomaly --table ... Anomaly detection (AI.DETECT_ANOMALIES)"
+    echo "  bq classify --table .. Text classification (AI.CLASSIFY)"
+    echo "  bq search --table ...  Vector search & embeddings (VECTOR_SEARCH)"
+    echo "  bq clip                Evaluate and dry-run clipboard SQL"
     ;;
 esac
