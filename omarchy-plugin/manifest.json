@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "syntax_mind.phone",
+  "name": "Phone mirror",
+  "version": "1.0.0",
+  "author": "syntax_mind",
+  "description": "Toggle the moto g56 scrcpy mirror window",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "PhoneWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Phone mirror",
+    "description": "Show/hide the phone screen mirror",
+    "category": "Custom",
+    "allowMultiple": false
+  }
+}

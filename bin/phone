@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# phone — moto g56 control from Omarchy. adb over USB or wifi (auto-discovered IP, port 5555).
+set -euo pipefail
+SERIAL="${PHONE_SERIAL:-}"
+IPCACHE="$HOME/.cache/phone-wifi-ip"
+NETBIRD_IP=""   # set once phone joins the NetBird mesh, e.g. 100.112.x.y
+
+find_wifi() {
+  # 1. cached IP still open?  2. netbird IP?  3. scan local /24 for port 5555
+  local ip
+  if [[ -f "$IPCACHE" ]]; then
+    ip=$(<"$IPCACHE")
+    timeout 0.7 bash -c "echo >/dev/tcp/$ip/5555" 2>/dev/null && { echo "$ip"; return; }
+  fi
+  if [[ -n "$NETBIRD_IP" ]]; then
+    timeout 1.5 bash -c "echo >/dev/tcp/$NETBIRD_IP/5555" 2>/dev/null && { echo "$NETBIRD_IP" | tee "$IPCACHE"; return; }
+  fi
+  local base
+  base=$(ip -4 route show default | grep -oP 'src \K[\d.]+' | head -1 | cut -d. -f1-3) || return 1
+  [[ -n "$base" ]] || return 1
+  for i in $(seq 1 254); do
+    (timeout 0.5 bash -c "echo >/dev/tcp/$base.$i/5555" 2>/dev/null && echo "$base.$i") &
+  done | head -1 | tee "$IPCACHE"
+}
+
+resolve() {
+  # echo the adb serial to drive: USB if plugged, else wifi (connect if needed)
+  if adb devices | grep -q "^$SERIAL[[:space:]]*device"; then echo "$SERIAL"; return; fi
+  local live
+  live=$(adb devices | grep -oP '^[\d.]+:5555(?=\s*device)' | head -1) && [[ -n "$live" ]] && { echo "$live"; return; }
+  local ip
+  ip=$(find_wifi) || { echo "phone: not found (USB out, no wifi adb on this subnet)" >&2; return 1; }
+  timeout 8 adb connect "$ip:5555" >/dev/null 2>&1 || true
+  echo "$ip:5555"
+}
+
+adbp() { local d; d=$(resolve) || exit 1; adb -s "$d" "$@"; }
+
+case "${1:-help}" in
+  shot)      out="${2:-/tmp/phone-$(date +%s).png}"; adbp exec-out screencap -p > "$out"; echo "$out" ;;
+  tap)       adbp shell input tap "$2" "$3" ;;
+  type)      shift; adbp shell input text "$(printf %s "$*" | sed 's/ /%s/g')" ;;
+  key)       adbp shell input keyevent "$2" ;;   # 3=home 4=back 26=power
+  open)      adbp shell am start -a android.intent.action.VIEW -d "$2" ;;
+  app)       adbp shell monkey -p "$2" -c android.intent.category.LAUNCHER 1 >/dev/null ;;
+  notifs)    adbp shell dumpsys notification --noredact 2>/dev/null | grep -E 'android.title=|android.text=' | sed 's/^ *//' | head -40 ;;
+  pull)      adbp pull "$2" "${3:-.}" ;;
+  push)      adbp push "$2" "${3:-/sdcard/Download/}" ;;
+  find)      find_wifi ;;
+  show)      # toggle mirror visibility: hidden -> bring to active workspace, visible -> hide, dead -> launch
+             if ! pgrep -x scrcpy >/dev/null; then exec "$0" mirror; fi
+             addr=$(hyprctl clients -j | jq -r '.[]|select(.class=="scrcpy")|.address' | head -1)
+             ws=$(hyprctl clients -j | jq -r '.[]|select(.class=="scrcpy")|.workspace.name' | head -1)
+             if [[ "$ws" == special:phone ]]; then
+               cur=$(hyprctl activeworkspace -j | jq -r .name)
+               hyprctl dispatch "hl.dsp.window.move({ workspace = \"$cur\", window = \"address:$addr\" })" >/dev/null
+               hyprctl dispatch "hl.dsp.focus({ window = \"address:$addr\" })" >/dev/null
+             else
+               hyprctl dispatch "hl.dsp.window.move({ workspace = \"special:phone\", window = \"address:$addr\", silent = true })" >/dev/null
+             fi ;;
+  mirror)    # toggle. Borderless phone-shaped window; physical screen goes dark, mirror stays live.
+             if pgrep -x scrcpy >/dev/null; then pkill -x scrcpy; else
+               d=$(resolve) || exit 1
+               setsid scrcpy -s "$d" --window-title 'moto g56' \
+                 --window-borderless --turn-screen-off --stay-awake \
+                 --power-off-on-close >/dev/null 2>&1 &
+             fi ;;
+  ping)      adbp shell echo pong ;;
+  battery)   adbp shell dumpsys battery | grep -E 'level|status' ;;
+  notify)    shift; t="${1:-Laptop}"; shift || true; curl -s -X POST "https://ntfy.sh/${PHONE_NTFY_TOPIC:?set PHONE_NTFY_TOPIC}" -H "Title: $t" -d "${*:-ping}" >/dev/null && echo sent ;;
+  ai)        shift; exec claude -p "You control an Android phone (moto g56) via bash adb (device $SERIAL). Use 'phone shot', 'phone tap X Y', 'phone type', 'phone key', 'phone open <uri>', 'phone app <pkg>', read screenshots to see the screen. Screen is 1080x2400. Task: $*" ;;
+  *) grep -E '^  [a-z]+\)' "$0" | sed 's/).*//;s/^ *//' ;;
+esac

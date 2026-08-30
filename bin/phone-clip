@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Send laptop clipboard to phone as ntfy notification (tap to copy on phone).
+clip=$(wl-paste 2>/dev/null || xclip -o 2>/dev/null)
+[ -z "$clip" ] && { notify-send "phone-clip" "clipboard empty"; exit 1; }
+curl -s -X POST "https://ntfy.sh/${PHONE_NTFY_TOPIC:?set PHONE_NTFY_TOPIC}" -H "Title: Clipboard from laptop" -H "Tags: clipboard" -d "$clip" >/dev/null \
+  && notify-send "phone-clip" "sent to phone"
