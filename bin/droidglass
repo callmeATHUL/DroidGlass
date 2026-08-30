@@ -41,19 +41,21 @@ find_wifi() {
 }
 
 resolve() {
-  # Return the active adb target: USB if plugged, else wireless adb
+  # 1. Check explicit serial
   if [[ -n "$SERIAL" ]] && adb devices | grep -q "^$SERIAL[[:space:]]*device"; then
     echo "$SERIAL"
     return 0
   fi
 
+  # 2. Check any live connected USB or Wi-Fi device
   local live
-  live=$(adb devices | grep -oP '^[\d.]+:5555(?=\s*device)' | head -1) || true
+  live=$(adb devices | grep -oP '^\S+(?=\s+device)' | head -1) || true
   if [[ -n "$live" ]]; then
     echo "$live"
     return 0
   fi
 
+  # 3. Try to discover via Wi-Fi scan
   local ip
   ip=$(find_wifi) || { echo "droidglass: phone not found (USB unplugged, no wifi adb on subnet)" >&2; return 1; }
   timeout 8 adb connect "$ip:5555" >/dev/null 2>&1 || true
@@ -88,7 +90,8 @@ daemon_start() {
     exit 1
   fi
   nohup "$daemon_bin" >/dev/null 2>&1 &
-  echo "droidglassd started (PID $!)"
+  sleep 0.5
+  echo "droidglassd started (PID $(<"$PIDFILE" 2>/dev/null || echo "$!"))"
 }
 
 daemon_stop() {
@@ -105,6 +108,10 @@ daemon_stop() {
 }
 
 case "${1:-help}" in
+  resolve)
+    resolve
+    ;;
+
   mirror)
     # Start or stop the scrcpy window. Phone screen dark, stays awake, borderless.
     if pgrep -x scrcpy >/dev/null; then
@@ -219,8 +226,9 @@ case "${1:-help}" in
   bq)
     # Forward to BigQuery AI module
     shift
-    SCRIPT_DIR="$(dirname "$(realpath "$0")")"
-    exec "$SCRIPT_DIR/bq-ai" "$@"
+    SCRIPT_DIR="$(dirname "$(realpath "$0")")/../plugins/bq-desktop-ai"
+    export PYTHONPATH="$SCRIPT_DIR:${PYTHONPATH:-}"
+    exec python3 -m src.cli "$@"
     ;;
 
   ai)
