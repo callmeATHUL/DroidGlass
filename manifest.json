@@ -15,6 +15,7 @@
     "displayName": "DroidGlass",
     "description": "Show/hide Android phone mirror with state-aware hand-off & BigQuery AI companion",
     "category": "Custom",
+    "defaultSection": "right",
     "allowMultiple": false
   }
 }
