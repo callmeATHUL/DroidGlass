@@ -98,12 +98,21 @@ daemon_stop() {
   if [[ -f "$PIDFILE" ]]; then
     local pid
     pid=$(<"$PIDFILE")
-    kill "$pid" 2>/dev/null || true
+    local daemon_bin
+    daemon_bin="$(dirname "$(realpath "$0")")/droidglassd"
+
+    # PID files can become stale or point at a reused PID. Only signal a
+    # process whose command line contains this exact daemon path.
+    if [[ "$pid" =~ ^[0-9]+$ ]] && [[ -r "/proc/$pid/cmdline" ]] && \
+      tr '\0' '\n' < "/proc/$pid/cmdline" | grep -Fqx "$daemon_bin"; then
+      kill "$pid" 2>/dev/null || true
+    else
+      echo "droidglass: refusing to signal an unrelated or stale PID ($pid)" >&2
+    fi
     rm -f "$PIDFILE"
     echo "droidglassd stopped"
   else
-    pkill -f droidglassd 2>/dev/null || true
-    echo "droidglassd stopped"
+    echo "droidglassd is not running"
   fi
 }
 
