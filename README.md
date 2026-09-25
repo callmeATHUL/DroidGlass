@@ -26,19 +26,45 @@ The phone appears as a borderless, floating window with rounded corners and drop
 See [docs/INSTALL.md](docs/INSTALL.md) and [docs/BQ_AI.md](docs/BQ_AI.md) for full instructions.
 
 ```bash
-# 1. Install CLI tools
+# 1. Install and enable the Omarchy plugin
+omarchy plugin add https://github.com/callmeATHUL/DroidGlass --enable
+
+# 2. Optional: install the CLI wrappers globally
 install -m755 bin/droidglass bin/droidglassd bin/droidglass-clip bin/bq-ai ~/.local/bin/
 ln -sf ~/.local/bin/droidglass ~/.local/bin/phone
 ln -sf ~/.local/bin/droidglass-clip ~/.local/bin/phone-clip
 
-# 2. Add Hyprland window rules & keybindings
+# 3. Add Hyprland window rules & keybindings
 cat hypr/phone-mirror.lua >> ~/.config/hypr/hyprland.lua
 cat hypr/bq-ai.lua >> ~/.config/hypr/hyprland.lua
 hyprctl reload
 
-# 3. Start state daemon
+# 4. Start state daemon (optional)
 droidglass daemon start
 ```
+
+The plugin itself is self-contained: its bar widget calls the bundled CLI from
+the installed plugin directory. The global CLI installation is only needed if
+you want to call `droidglass` or the `phone` compatibility aliases directly
+from a terminal or Hyprland keybinding.
+
+## Removal
+
+Disable and remove the plugin with Omarchy, then remove only the optional CLI
+files if you installed them:
+
+```bash
+~/.config/omarchy/plugins/droidglass.mirror/bin/droidglass daemon stop
+omarchy plugin disable droidglass.mirror
+omarchy plugin remove droidglass.mirror --yes
+rm -f ~/.local/bin/droidglass ~/.local/bin/droidglassd \
+  ~/.local/bin/droidglass-clip ~/.local/bin/bq-ai \
+  ~/.local/bin/phone ~/.local/bin/phone-clip
+```
+
+If you added the rules or keybindings manually, remove those DroidGlass lines
+from your user-owned Hyprland configuration before reloading it. The plugin
+does not modify user configuration automatically.
 
 ---
 

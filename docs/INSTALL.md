@@ -52,7 +52,23 @@ hyprctl reload
 ### C. Install Omarchy Bar Widget
 If using Omarchy Shell:
 ```bash
-omarchy plugin add https://github.com/<your-username>/droidglass --enable
+omarchy plugin add https://github.com/callmeATHUL/DroidGlass --enable
+```
+
+To remove the plugin:
+
+```bash
+~/.config/omarchy/plugins/droidglass.mirror/bin/droidglass daemon stop
+omarchy plugin disable droidglass.mirror
+omarchy plugin remove droidglass.mirror --yes
+```
+
+If you installed the optional global CLI wrappers, remove only those files:
+
+```bash
+rm -f ~/.local/bin/droidglass ~/.local/bin/droidglassd \
+  ~/.local/bin/droidglass-clip ~/.local/bin/bq-ai \
+  ~/.local/bin/phone ~/.local/bin/phone-clip
 ```
 
 ---
