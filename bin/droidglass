@@ -6,6 +6,7 @@ set -euo pipefail
 SERIAL="${PHONE_SERIAL:-}"
 IPCACHE="${XDG_CACHE_HOME:-$HOME/.cache}/droidglass-wifi-ip"
 PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/droidglassd.pid"
+MIRROR_PIDFILE="${XDG_RUNTIME_DIR:-/tmp}/droidglass-mirror.pid"
 NETBIRD_IP="${PHONE_NETBIRD_IP:-}"   # Mesh IP e.g. 100.112.x.y
 
 mkdir -p "$(dirname "$IPCACHE")"
@@ -116,6 +117,30 @@ daemon_stop() {
   fi
 }
 
+mirror_pid_is_ours() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ -r "/proc/$pid/cmdline" ]] || return 1
+  tr '\0' '\n' < "/proc/$pid/cmdline" | awk '$0 == "scrcpy" || $0 ~ /\/scrcpy$/ { found = 1 } END { exit !found }' || return 1
+  tr '\0' '\n' < "/proc/$pid/cmdline" | grep -Fxq -- "droidglass" || return 1
+}
+
+mirror_stop() {
+  if [[ -f "$MIRROR_PIDFILE" ]]; then
+    local pid
+    pid=$(<"$MIRROR_PIDFILE")
+    if mirror_pid_is_ours "$pid"; then
+      kill "$pid" 2>/dev/null || true
+    else
+      echo "droidglass: refusing to signal an unrelated or stale mirror PID ($pid)" >&2
+    fi
+    rm -f "$MIRROR_PIDFILE"
+    echo "droidglass: mirror stopped"
+  else
+    echo "droidglass: no DroidGlass mirror is running"
+  fi
+}
+
 case "${1:-help}" in
   resolve)
     resolve
@@ -123,23 +148,24 @@ case "${1:-help}" in
 
   mirror)
     # Start or stop the scrcpy window. Phone screen dark, stays awake, borderless.
-    if pgrep -x scrcpy >/dev/null; then
-      pkill -x scrcpy
-      echo "droidglass: mirror stopped"
+    if [[ -f "$MIRROR_PIDFILE" ]] && mirror_pid_is_ours "$(<"$MIRROR_PIDFILE")"; then
+      mirror_stop
     else
+      rm -f "$MIRROR_PIDFILE"
       d=$(resolve) || exit 1
       # Apply stayon to prevent MTK doze issues
       adb -s "$d" shell svc power stayon true >/dev/null 2>&1 || true
       setsid scrcpy -s "$d" --window-title 'droidglass' \
         --window-borderless --turn-screen-off --stay-awake \
         --power-off-on-close >/dev/null 2>&1 &
+      echo "$!" > "$MIRROR_PIDFILE"
       echo "droidglass: mirror launched for $d"
     fi
     ;;
 
   show)
     # Toggle visibility: hidden in special:phone -> active workspace, visible -> special:phone, dead -> launch
-    if ! pgrep -x scrcpy >/dev/null; then
+    if [[ ! -f "$MIRROR_PIDFILE" ]] || ! mirror_pid_is_ours "$(<"$MIRROR_PIDFILE")"; then
       exec "$0" mirror
     fi
     addr=$(hyprctl clients -j 2>/dev/null | jq -r '.[] | select(.class=="scrcpy" or .title=="droidglass") | .address' | head -1)
